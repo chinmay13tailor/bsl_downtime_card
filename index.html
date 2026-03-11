@@ -9,7 +9,7 @@
 <style>
 
 body{
-font-family:"Segoe UI";
+font-family:"Segoe UI",sans-serif;
 background:#f3f4f6;
 margin:0;
 color:#1e293b;
@@ -32,24 +32,53 @@ color:#1e3a8a;
 font-size:18px;
 }
 
+/* FILTERS */
+
 .filters{
 display:flex;
+flex-wrap:wrap;
 gap:12px;
 align-items:center;
-margin-bottom:20px;
+margin-bottom:16px;
 }
 
-select,button{
+.quick-buttons{
+display:flex;
+gap:8px;
+}
+
+.qbtn{
 padding:8px 12px;
-border-radius:6px;
+border-radius:8px;
+border:none;
+background:#e2e8f0;
+cursor:pointer;
+font-size:13px;
+}
+
+.qbtn.active{
+background:#0f172a;
+color:white;
+}
+
+.date-group{
+display:flex;
+align-items:center;
+gap:8px;
+}
+
+.date-group input{
+padding:6px;
 border:1px solid #cbd5e1;
-font-size:14px;
+border-radius:6px;
 }
 
 button{
-background:#2563eb;
-color:#fff;
+padding:8px 12px;
+border-radius:6px;
 border:none;
+background:#2563eb;
+color:white;
 cursor:pointer;
 font-weight:600;
 }
@@ -58,13 +87,13 @@ button:hover{
 background:#1d4ed8;
 }
 
-/* EVENT CARD */
+/* EVENT CARDS */
 
 .event{
 background:#f8fafc;
 border-radius:10px;
 padding:14px;
-margin-bottom:12px;
+margin-bottom:10px;
 display:flex;
 justify-content:space-between;
 align-items:center;
@@ -99,7 +128,6 @@ font-weight:700;
 .menu{
 cursor:pointer;
 font-size:20px;
-padding:4px;
 }
 
 /* Pagination */
@@ -148,10 +176,19 @@ border-radius:10px;
 
 <div class="filters">
 
-<select id="range">
-<option value="24H">Last 24 Hours</option>
-<option value="WEEK">This Week</option>
-</select>
+<div class="quick-buttons">
+<button class="qbtn active" onclick="setRange('24H',this)">Last 24 Hours</button>
+<button class="qbtn" onclick="setRange('CURR_WEEK',this)">Current Week</button>
+<button class="qbtn" onclick="setRange('PREV_WEEK',this)">Previous Week</button>
+</div>
+
+<div class="date-group">
+<label>Start Date</label>
+<input type="date" id="startDate">
+
+<label>End Date</label> <input type="date" id="endDate">
+
+</div>
 
 <button onclick="loadDowntime()">Generate</button>
 
@@ -180,7 +217,7 @@ Select range and click Generate
 
 </div>
 
-<!-- MODAL -->
+<!-- EDIT MODAL -->
 
 <div id="editModal" class="modal">
 <div class="modal-box">
@@ -227,11 +264,13 @@ const KEYS=[
 
 const JWT=new URLSearchParams(location.search).get("token")||"";
 
+/* STATE */
+
+let selectedRange="24H";
 let allRows=[];
 let currentPage=1;
 let pageSize=10;
 let selectedTs=null;
-
 
 /* HELPERS */
 
@@ -244,17 +283,28 @@ function secToMin(v){
 return Math.round(Number(v||0)/60);
 }
 
+/* RANGE SELECT */
 
-/* RANGE */
+function setRange(range,btn){
+
+selectedRange=range;
+
+document.querySelectorAll(".qbtn").forEach(b=>b.classList.remove("active"));
+btn.classList.add("active");
+
+}
+
+/* RANGE CALC */
 
 function getRange(){
 
-const type=range.value;
 const now=Date.now();
 
-if(type==="24H"){
+if(selectedRange==="24H"){
 return{startTs:now-86400000,endTs:now};
 }
+
+if(selectedRange==="CURR_WEEK"){
 
 const d=new Date();
 d.setHours(0,0,0,0);
@@ -264,6 +314,31 @@ return{startTs:d.getTime(),endTs:now};
 
 }
 
+if(selectedRange==="PREV_WEEK"){
+
+const d=new Date();
+d.setHours(0,0,0,0);
+
+const day=d.getDay();
+
+const start=new Date(d);
+start.setDate(d.getDate()-day-7);
+
+const end=new Date(d);
+end.setDate(d.getDate()-day);
+
+return{startTs:start.getTime(),endTs:end.getTime()};
+
+}
+
+/* CUSTOM DATE */
+
+const start=new Date(startDate.value).getTime();
+const end=new Date(endDate.value).getTime();
+
+return{startTs:start,endTs:end};
+
+}
 
 /* LOAD DATA */
 
@@ -300,7 +375,6 @@ renderPage();
 status.textContent="Loaded ✅";
 
 }
-
 
 /* RENDER EVENTS */
 
@@ -355,7 +429,6 @@ pageInfo.textContent=`Page ${currentPage} of ${totalPages}`;
 
 }
 
-
 /* PAGINATION */
 
 function nextPage(){
@@ -363,10 +436,8 @@ function nextPage(){
 const totalPages=Math.ceil(allRows.length/pageSize);
 
 if(currentPage<totalPages){
-
 currentPage++;
 renderPage();
-
 }
 
 }
@@ -374,24 +445,19 @@ renderPage();
 function prevPage(){
 
 if(currentPage>1){
-
 currentPage--;
 renderPage();
-
 }
 
 }
 
 function changePageSize(){
 
-pageSize=Number(pageSize.value);
-
+pageSize=Number(document.getElementById("pageSize").value);
 currentPage=1;
-
 renderPage();
 
 }
-
 
 /* MODAL */
 
@@ -415,17 +481,13 @@ editModal.style.display="none";
 
 }
 
-
 /* UPDATE */
 
 async function submitUpdate(){
 
 const payload=[{
-
 ts:selectedTs,
-
 values:{Downtime_Description:mReason.value}
-
 }];
 
 await fetch(`${API}/plugins/telemetry/DEVICE/${DEVICE_ID}/timeseries/ANY`,{
@@ -433,10 +495,8 @@ await fetch(`${API}/plugins/telemetry/DEVICE/${DEVICE_ID}/timeseries/ANY`,{
 method:"POST",
 
 headers:{
-
 "X-Authorization":"Bearer "+JWT,
 "Content-Type":"application/json"
-
 },
 
 body:JSON.stringify(payload)
@@ -444,7 +504,6 @@ body:JSON.stringify(payload)
 });
 
 closeModal();
-
 loadDowntime();
 
 }
