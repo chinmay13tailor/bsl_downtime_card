@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Downtime Events</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+
+body{
+font-family:"Segoe UI";
+background:#f3f4f6;
+margin:0;
+color:#1e293b;
+}
+
+.page{
+padding:20px;
+}
+
+.card{
+background:#fff;
+border-radius:12px;
+padding:16px 20px;
+box-shadow:0 2px 10px rgba(0,0,0,.08);
+}
+
+h2{
+margin:0 0 14px;
+color:#1e3a8a;
+font-size:18px;
+}
+
+.filters{
+display:flex;
+gap:12px;
+align-items:center;
+margin-bottom:20px;
+}
+
+select,button{
+padding:8px 12px;
+border-radius:6px;
+border:1px solid #cbd5e1;
+font-size:14px;
+}
+
+button{
+background:#2563eb;
+color:#fff;
+border:none;
+cursor:pointer;
+font-weight:600;
+}
+
+button:hover{
+background:#1d4ed8;
+}
+
+/* EVENT CARD */
+
+.event{
+background:#f8fafc;
+border-radius:10px;
+padding:14px;
+margin-bottom:12px;
+display:flex;
+justify-content:space-between;
+align-items:center;
+border-left:4px solid #ff6a00;
+}
+
+.event-left{
+display:flex;
+gap:40px;
+}
+
+.block{
+display:flex;
+flex-direction:column;
+}
+
+.label{
+font-size:12px;
+color:#64748b;
+}
+
+.value{
+font-size:14px;
+font-weight:600;
+}
+
+.duration{
+color:#ff4d00;
+font-weight:700;
+}
+
+.menu{
+cursor:pointer;
+font-size:20px;
+padding:4px;
+}
+
+/* Pagination */
+
+.pagination{
+display:flex;
+justify-content:flex-end;
+margin-top:12px;
+}
+
+.pagination-right{
+display:flex;
+gap:8px;
+align-items:center;
+}
+
+/* MODAL */
+
+.modal{
+display:none;
+position:fixed;
+inset:0;
+background:rgba(0,0,0,.4);
+z-index:10;
+}
+
+.modal-box{
+background:#fff;
+width:420px;
+margin:8% auto;
+padding:20px;
+border-radius:10px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="page">
+
+<div class="card">
+
+<h2>Downtime Events</h2>
+
+<div class="filters">
+
+<select id="range">
+<option value="24H">Last 24 Hours</option>
+<option value="WEEK">This Week</option>
+</select>
+
+<button onclick="loadDowntime()">Generate</button>
+
+<span id="status">—</span>
+
+</div>
+
+<div id="eventList">
+Select range and click Generate
+</div>
+
+<div class="pagination">
+<div class="pagination-right">
+
+<select id="pageSize" onchange="changePageSize()">
+<option value="10">10 rows</option>
+<option value="20">20 rows</option>
+</select>
+
+<button onclick="prevPage()">Prev</button> <span id="pageInfo">Page 1 of 1</span> <button onclick="nextPage()">Next</button>
+
+</div>
+</div>
+
+</div>
+
+</div>
+
+<!-- MODAL -->
+
+<div id="editModal" class="modal">
+<div class="modal-box">
+
+<h3>Edit Downtime Reason</h3>
+
+<p><b>Start:</b> <span id="mStart"></span></p>
+<p><b>End:</b> <span id="mEnd"></span></p>
+<p><b>Duration:</b> <span id="mDuration"></span> min</p>
+
+<select id="mReason" style="width:100%;margin:10px 0">
+
+<option>Power failure</option>
+<option>Planned maintenance</option>
+<option>Material shortage</option>
+<option>Changeover / Setup</option>
+<option>Lubrication cycle</option>
+<option>Quality inspection hold</option>
+<option>Unplanned breakdown</option>
+<option>Overheat cooldown</option>
+<option>Safety interlock opened</option>
+<option>Cleaning / 5S</option>
+
+</select>
+
+<button onclick="submitUpdate()">Submit</button> <button onclick="closeModal()" style="background:#e5e7eb;color:#000">Cancel</button>
+
+</div>
+</div>
+
+<script>
+
+/* CONFIG */
+
+const API="https://plantwiz.pimateck.in/api";
+const DEVICE_ID="81261350-b886-11f0-87ea-b9809c1a7a9e";
+
+const KEYS=[
+"Downtime_Start_Time",
+"Downtime_End_Time",
+"Downtime_Duration",
+"Downtime_Description"
+];
+
+const JWT=new URLSearchParams(location.search).get("token")||"";
+
+let allRows=[];
+let currentPage=1;
+let pageSize=10;
+let selectedTs=null;
+
+
+/* HELPERS */
+
+function fmtDate(v){
+if(!v)return "—";
+return new Date(v.replace(" ","T")).toLocaleString();
+}
+
+function secToMin(v){
+return Math.round(Number(v||0)/60);
+}
+
+
+/* RANGE */
+
+function getRange(){
+
+const type=range.value;
+const now=Date.now();
+
+if(type==="24H"){
+return{startTs:now-86400000,endTs:now};
+}
+
+const d=new Date();
+d.setHours(0,0,0,0);
+d.setDate(d.getDate()-d.getDay());
+
+return{startTs:d.getTime(),endTs:now};
+
+}
+
+
+/* LOAD DATA */
+
+async function loadDowntime(){
+
+status.textContent="Loading...";
+currentPage=1;
+
+const{startTs,endTs}=getRange();
+
+const url=
+`${API}/plugins/telemetry/DEVICE/${DEVICE_ID}/values/timeseries`+
+`?keys=${KEYS.join(",")}&startTs=${startTs}&endTs=${endTs}&limit=2000&agg=NONE`;
+
+const res=await fetch(url,{
+headers:{"X-Authorization":"Bearer "+JWT}
+});
+
+const data=await res.json();
+
+const rows={};
+
+Object.entries(data).forEach(([key,arr])=>{
+(arr||[]).forEach(p=>{
+rows[p.ts]=rows[p.ts]||{ts:p.ts};
+rows[p.ts][key]=p.value;
+});
+});
+
+allRows=Object.values(rows).sort((a,b)=>b.ts-a.ts);
+
+renderPage();
+
+status.textContent="Loaded ✅";
+
+}
+
+
+/* RENDER EVENTS */
+
+function renderPage(){
+
+eventList.innerHTML="";
+
+const start=(currentPage-1)*pageSize;
+const pageRows=allRows.slice(start,start+pageSize);
+
+pageRows.forEach(r=>{
+
+eventList.innerHTML+=`
+
+<div class="event">
+
+<div class="event-left">
+
+<div class="block">
+<div class="label">Start Time</div>
+<div class="value">${fmtDate(r.Downtime_Start_Time)}</div>
+</div>
+
+<div class="block">
+<div class="label">End Time</div>
+<div class="value">${fmtDate(r.Downtime_End_Time)}</div>
+</div>
+
+<div class="block">
+<div class="label">Duration</div>
+<div class="value duration">${secToMin(r.Downtime_Duration)} min</div>
+</div>
+
+<div class="block">
+<div class="label">Downtime Reason</div>
+<div class="value">${r.Downtime_Description||"—"}</div>
+</div>
+
+</div>
+
+<div class="menu" onclick='openModal(${JSON.stringify(r)})'>⋮</div>
+
+</div>
+
+`;
+
+});
+
+const totalPages=Math.max(1,Math.ceil(allRows.length/pageSize));
+
+pageInfo.textContent=`Page ${currentPage} of ${totalPages}`;
+
+}
+
+
+/* PAGINATION */
+
+function nextPage(){
+
+const totalPages=Math.ceil(allRows.length/pageSize);
+
+if(currentPage<totalPages){
+
+currentPage++;
+renderPage();
+
+}
+
+}
+
+function prevPage(){
+
+if(currentPage>1){
+
+currentPage--;
+renderPage();
+
+}
+
+}
+
+function changePageSize(){
+
+pageSize=Number(pageSize.value);
+
+currentPage=1;
+
+renderPage();
+
+}
+
+
+/* MODAL */
+
+function openModal(row){
+
+selectedTs=row.ts;
+
+mStart.textContent=fmtDate(row.Downtime_Start_Time);
+mEnd.textContent=fmtDate(row.Downtime_End_Time);
+mDuration.textContent=secToMin(row.Downtime_Duration);
+
+mReason.value=row.Downtime_Description||"";
+
+editModal.style.display="block";
+
+}
+
+function closeModal(){
+
+editModal.style.display="none";
+
+}
+
+
+/* UPDATE */
+
+async function submitUpdate(){
+
+const payload=[{
+
+ts:selectedTs,
+
+values:{Downtime_Description:mReason.value}
+
+}];
+
+await fetch(`${API}/plugins/telemetry/DEVICE/${DEVICE_ID}/timeseries/ANY`,{
+
+method:"POST",
+
+headers:{
+
+"X-Authorization":"Bearer "+JWT,
+"Content-Type":"application/json"
+
+},
+
+body:JSON.stringify(payload)
+
+});
+
+closeModal();
+
+loadDowntime();
+
+}
+
+</script>
+
+</body>
+</html>
